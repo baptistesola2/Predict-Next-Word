@@ -1,0 +1,197 @@
+---
+title: "Milestone Report - SwiftKey Dataset"
+author: "Baptiste Sola"
+date: "27 octobre 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE, message=FALSE}
+library(tm)
+library(ggplot2)
+library(dplyr)
+library(scales)
+library(tools)
+library(textcat)
+```
+## Data Processing 
+### Reading and Sampling
+The following will focus only on the Us blog text file.
+
+We start by reading the text file into R.
+
+```{r}
+con <- file("en_US.blogs.txt", "r")
+US.blog <- readLines(con, encoding = "UTF-8", skipNul = TRUE)
+close(con)
+paste("The US blog text file is made of", length(US.blog),"lines.")
+```
+The document is too big to be handle, we need to sample. Let's work with 10000 lines
+```{r}
+set.seed(220)
+sample10000 <- sample(US.blog, size=10000)
+```
+
+### Profanity filtering 
+We want to exclude any profanity from the text corpus. So we choose a profanity list from http://www.bannedwordlist.com/lists/swearWords.txt and use the fonction removeWords from tm package.
+```{r}
+profanity <- readLines("enProfanity.txt")
+profanity <- append(profanity,append(toTitleCase(profanity),toupper(profanity)))
+sampleClean <- removeWords(sample10000, words = profanity)
+```
+
+### Split of lines
+We now need to split those lines in sentences, words or n-grams. We consider that any ponctuation (including comas and such) split a line into distinct sentences. 
+Also a n-gram is defined as a sequence of words within a sentence.
+Words are separated by space ("let's" will be a single word)
+
+```{r}
+lineToSentences <- function(text) {
+    textSent <- strsplit(text,"\\.|\\!|\\?|\\||,|;|:")
+    tmp <- vector()
+    for (i in 1:length(textSent)) {tmp <- append(tmp,as.character(textSent[[i]]))}
+    # we filter out the sentence with less than 2 characters
+    tmp[nchar(tmp)>2]
+}
+
+lineToWords <- function(text) {
+    textWord <- strsplit(text,"\\ |,|;|:|\\/|\\*|\\.|\\!|\\?|\\|")
+    tmp <- vector()
+    for (i in 1:length(textWord)) {tmp <- append(tmp,as.character(textWord[[i]]))}
+   # We filter out the empty characters 
+     tmp[tmp != ""]
+}
+
+#Takes a sentence as input 
+sentToNgram <- function(sentence, n){
+    words <- lineToWords(sentence)
+    nGrams <- vector()
+    if (length(words)>=n){
+        for (i in 1:(length(words)-n+1)){
+            tmp <- ""
+            for(j in 1:n){
+                tmp <- paste(tmp,words[i+j-1])
+            }
+            nGrams <- append(nGrams,tmp)
+        }
+    }
+    nGrams
+}
+```
+
+The results of the manipulation can be seen here
+```{r}
+sample10000[1]
+lineToSentences(sample10000[1])
+sapply(lineToSentences(sample10000[1]),sentToNgram,4)
+lineToWords(sample10000[1])
+```
+
+## Exploratory analysis
+
+We build the TextFreq function to compute frequency of all the different entities (word, sentence...)
+
+
+```{r}
+TextFreq <- function(text){
+    t <- as.data.frame(table(text))
+    t$part <- t$Freq/sum(t$Freq)
+    t<- arrange(t,desc(Freq))
+    t$cumul <- cumsum(t$Freq)
+    t
+}
+plotFreq <- function(toPlot, plotTitle){
+    ggplot(toPlot, aes(reorder(text, Freq), Freq, fill=text)) +
+        geom_text(aes(label = percent(toPlot$part)), vjust=-0.5, size=4) + 
+        geom_bar(stat = "identity") +
+        theme(axis.text.x = element_text(angle = 45, hjust = 0.5, size = 14)) +
+        labs(y="Frequency") +
+        labs(x="")+
+        labs(title=plotTitle)
+}
+```
+
+The top nGrams are 
+
+```{r, echo=FALSE}
+sent10000 <- lineToSentences(sample10000)
+words10000 <- lineToWords(sample10000)
+twoGrams10000 <- unlist(sapply(sent10000,sentToNgram,2), recursive = FALSE)
+threeGrams10000 <- unlist(sapply(sent10000,sentToNgram,3), recursive = FALSE)
+fourGrams10000 <- unlist(sapply(sent10000,sentToNgram,4), recursive = FALSE)
+
+n1Table <- TextFreq(words10000)
+n2Table <- TextFreq(twoGrams10000)
+n3Table <- TextFreq(threeGrams10000)
+n4Table <- TextFreq(fourGrams10000)
+
+plotFreq(n1Table[1:10,], paste("Top 10 Words counting for", percent(sum(n1Table$Freq[1:10])/sum(n1Table$Freq)),"of total occurences"))
+plotFreq(n2Table[1:10,], paste("Top 10 2grams counting for", percent(sum(n2Table$Freq[1:10])/sum(n2Table$Freq)),"of total occurences"))
+plotFreq(n3Table[1:10,], paste("Top 10 3grams counting for", percent(sum(n3Table$Freq[1:10])/sum(n3Table$Freq)),"of total occurences"))
+plotFreq(n4Table[1:10,], paste("Top 10 4grams counting for", percent(sum(n4Table$Freq[1:10])/sum(n4Table$Freq)),"of total occurences"))
+```
+
+The corpus of words is very condensed : 
+```{r, echo = FALSE}
+plot(n1Table$cumul, main = "Frequency of word Distribution",ylab = "Cumulative Frequency", xlab = "")
+abline(v=c(120,10000), h= c(sum(n1Table$Freq)/2, sum(n1Table$Freq)*0.9), col = "red")
+```
+The top 120 words account for 50% of the occurences. 
+The top 10000 words account for 90%
+### Foreign words
+
+The textcat package contains a language recognition function
+
+```{r, echo = FALSE}
+par(las=2)
+language.table <- as.data.frame(table(textcat(sent10000[1:1000])))
+language.table <- arrange(language.table, desc(Freq))
+barplot(language.table$Freq[1:10]/sum(language.table$Freq), horiz = TRUE, main = "Top 10 languages", names.arg  =language.table$Var1[1:10])
+```
+
+## First model for predicting next word
+
+The first model will take a 3gram to predict the next word. We match the 3 words with the first 3 word of the most frequently enconterd 4gram in ou corpus. 
+If we can't match the 3 words with a 4gram   we look at the  last 2 words of the 3 and match with most frequent 3grams.
+If we can't macth the last 2 words we do the same with the last word and the 2grams list.
+If we can't match the last word we just predict the most frequent word in our corpus.
+```{r}
+nextWord3 <- function(n3gram, n4Table, n3Table, n2Table, n1Table){
+    mat <- match(n3gram, n4Table$first3)
+    if(!is.na(mat)&mat<250){
+        return(n4Table$text[mat])
+    }
+    else {
+        gram2 <- strsplit(n3gram, " ")
+        gram2 <- paste(gram2[[1]][2],gram2[[1]][3])
+        nextWord2(gram2,n3Table,n2Table,n1Table)}
+}
+nextWord2 <- function(n2gram, n3Table, n2Table, n1Table){
+    mat <- match(n2gram, n3Table$first2)
+    if(!is.na(mat)&mat<500){
+        return(n3Table$ThirdWord[mat])
+    }
+    else {
+        gram1 <- strsplit(n2gram, " ")[[1]][2]
+        nextWord1(gram1,n2Table,n1Table)}
+}
+nextWord1 <- function(n1gram, n2Table, n1Table){
+    mat <- match(n1gram, n2Table$FistWord)
+    if(!is.na(mat)){
+        return(n2Table$SecWord[mat])
+    }
+    else { # if nothng works we predict the most frequent word
+        n1Table$text[1]
+    }
+}
+```
+
+Here are some examples 
+```{r}
+paste("For the text -- one of the -- we  predict : ", nextWord3("one of the",n4Table,n3Table,n2Table,n1Table))
+paste("For the text -- the best possible -- we  predict : ", nextWord3("the best possible",n4Table,n3Table,n2Table,n1Table))
+```
+
